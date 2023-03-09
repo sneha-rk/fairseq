@@ -221,6 +221,15 @@ class TransformerLanguageModelConfig(FairseqDataclass):
 
     # options from other parts of the config
     add_bos_token: bool = II("task.add_bos_token")
+    subsample: bool = field(
+        default=False,
+        metadata={
+            "help": "dropout probability after activation in FFN.",
+            "alias": "--subsample",
+        },
+    )
+    min_sample_dim: int = field(default=128, metadata={"help": "Use bnb optimizers if available."},)
+    # update_freq: int = field(default=1, metadata={"help": "Use bnb optimizers if available."},)
     tokens_per_sample: int = II("task.tokens_per_sample")
     max_target_positions: Optional[int] = II("task.max_target_positions")
     tpu: bool = II("common.tpu")

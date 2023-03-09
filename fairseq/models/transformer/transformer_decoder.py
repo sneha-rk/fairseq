@@ -26,6 +26,7 @@ from fairseq.modules import (
 )
 from fairseq.modules.checkpoint_activations import checkpoint_wrapper
 from fairseq.modules.quant_noise import quant_noise as apply_quant_noise_
+from fairseq.modules.transformer_layer import GlobalSampler
 
 
 # rewrite name for backward compatibility in `make_generation_fast_`
@@ -79,6 +80,9 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         self.embed_tokens = embed_tokens
 
         self.embed_scale = 1.0 if cfg.no_scale_embedding else math.sqrt(embed_dim)
+        GlobalSampler.get_instance().init_sampler(17, 128,
+                                                  cfg.decoder_ffn_embed_dim,
+                                                  1)
 
         if not cfg.adaptive_input and cfg.quant_noise.pq > 0:
             self.quant_noise = apply_quant_noise_(
@@ -213,7 +217,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
                 - the decoder's output of shape `(batch, tgt_len, vocab)`
                 - a dictionary with any model-specific outputs
         """
-
+        GlobalSampler.get_instance().sample_new_dim()
         x, extra = self.extract_features(
             prev_output_tokens,
             encoder_out=encoder_out,
@@ -226,6 +230,8 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         if not features_only:
             x = self.output_layer(x)
         return x, extra
+    
+    
 
     def extract_features(
         self,

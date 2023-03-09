@@ -5,15 +5,60 @@
 
 from typing import Dict, List, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
+import logging
+import torch.nn.functional as F
 
 from fairseq import utils
 from fairseq.models.transformer import TransformerConfig
 from fairseq.modules import LayerNorm, MultiheadAttention
 from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
+
+
+logger = logging.getLogger("fairseq_cli.train")
+
+
+class GlobalSampler:
+    _instance = None
+
+    def __init__(self):
+        raise RuntimeError("Call get_instance() instead")
+
+    def initialize(self):
+        self.rdm = None
+        self.choices = None
+        self.subset_size = 0
+        self.batch_iter = 1
+        self.update_freq = 0
+
+    def init_sampler(self, seed, min_dim, max_dim, update_freq=1):
+        self.rdm = np.random.RandomState(17)
+        self.choices = []
+        self.update_freq = update_freq
+        while True:
+            self.choices.append(min_dim)
+            min_dim *= 2
+            if min_dim > max_dim: break
+        self.subset_size = self.rdm.choice(self.choices)
+
+    def sample_new_dim(self):
+        if self.batch_iter > 0 and self.batch_iter % self.update_freq == 0:
+            self.batch_iter = 0
+            self.subset_size = self.rdm.choice(self.choices)
+        self.batch_iter += 1
+
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls.__new__(cls)
+            cls._instance.initialize()
+        return cls._instance
+
 
 
 class TransformerEncoderLayerBase(nn.Module):
@@ -44,6 +89,7 @@ class TransformerEncoderLayerBase(nn.Module):
             cfg.dropout, module_name=self.__class__.__name__
         )
         self.activation_fn = utils.get_activation_fn(activation=cfg.activation_fn)
+        self.subsample = cfg.subsample
         activation_dropout_p = cfg.activation_dropout
         if activation_dropout_p == 0:
             # for backwards compatibility with models that use cfg.relu_dropout
@@ -56,13 +102,13 @@ class TransformerEncoderLayerBase(nn.Module):
             self.embed_dim,
             cfg.encoder.ffn_embed_dim,
             self.quant_noise,
-            self.quant_noise_block_size,
+            self.quant_noise_block_size
         )
         self.fc2 = self.build_fc2(
             cfg.encoder.ffn_embed_dim,
             self.embed_dim,
             self.quant_noise,
-            self.quant_noise_block_size,
+            self.quant_noise_block_size
         )
 
         self.final_layer_norm = LayerNorm(self.embed_dim, export=cfg.export)
@@ -210,9 +256,32 @@ class TransformerEncoderLayerBase(nn.Module):
         residual = x
         if self.normalize_before:
             x = self.final_layer_norm(x)
-        x = self.activation_fn(self.fc1(x))
-        x = self.activation_dropout_module(x)
-        x = self.fc2(x)
+
+        if self.subsample and self.training:
+            self.s = GlobalSampler.get_instance()
+            s1 = self.s.subset_size//8
+            s2 = self.s.subset_size
+
+            print(s1, s2)
+            subx1 = x[:, :, :s1]
+            subw1 = self.fc1.weight[:s2, :s1]
+            bias1 = self.fc1.bias[:s2]
+            x = F.linear(subx1, subw1, bias1)
+
+            x = self.activation_fn(x)
+
+            x = self.activation_dropout_module(x)
+            #subx2 = x[:, :, :s2]
+            subw2 = self.fc2.weight[:, :s2]
+            bias2 = self.fc2.bias
+            x = F.linear(x, subw2, bias2)         
+        else:
+            print("nope")
+            x = self.fc1(x)
+            x = self.activation_fn(x)
+            x = self.activation_dropout_module(x)
+            x = self.fc2(x)
+            
 
         fc_result = x
 
@@ -265,6 +334,7 @@ class TransformerDecoderLayerBase(nn.Module):
         )
         self.quant_noise = cfg.quant_noise.pq
         self.quant_noise_block_size = cfg.quant_noise.pq_block_size
+        self.subsample = cfg.subsample
 
         self.cross_self_attention = cfg.cross_self_attention
 
@@ -328,6 +398,7 @@ class TransformerDecoderLayerBase(nn.Module):
             cfg.decoder.ffn_embed_dim,
             self.quant_noise,
             self.quant_noise_block_size,
+
         )
         self.fc2 = self.build_fc2(
             cfg.decoder.ffn_embed_dim,
@@ -503,11 +574,38 @@ class TransformerDecoderLayerBase(nn.Module):
         if self.normalize_before:
             x = self.final_layer_norm(x)
 
-        x = self.activation_fn(self.fc1(x))
-        x = self.activation_dropout_module(x)
-        if self.ffn_layernorm is not None:
-            x = self.ffn_layernorm(x)
-        x = self.fc2(x)
+        
+        if self.subsample and self.training:
+            self.s = GlobalSampler.get_instance()
+            s1 = self.s.subset_size//8
+            s2 = self.s.subset_size
+
+            # print(s1, s2)
+            subx1 = x[:, :, :s1]
+            subw1 = self.fc1.weight[:s2, :s1]
+            bias1 = self.fc1.bias[:s2]
+            x = F.linear(subx1, subw1, bias1)
+
+            x = self.activation_fn(x)
+
+            x = self.activation_dropout_module(x)
+            if self.ffn_layernorm is not None:
+                x = self.ffn_layernorm(x)
+            #subx2 = x[:, :, :s2]
+
+            
+            subw2 = self.fc2.weight[:, :s2]
+            bias2 = self.fc2.bias
+            x = F.linear(x, subw2, bias2)
+        else:
+            x = self.fc1(x)
+            x = self.activation_fn(x)
+            x = self.activation_dropout_module(x)
+            # print("nope")
+            if self.ffn_layernorm is not None:
+                x = self.ffn_layernorm(x)
+            x = self.fc2(x)
+            
         x = self.dropout_module(x)
         if self.w_resid is not None:
             residual = torch.mul(self.w_resid, residual)

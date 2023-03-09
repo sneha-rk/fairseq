@@ -215,7 +215,7 @@ class FusedAdamV1(torch.optim.Optimizer):
 
                 state["step"] += 1
 
-                with torch.cuda.device(p_data_fp32.device):
+                with torch.cuda.device(p.device):
                     fused_adam_cuda.adam(
                         p_data_fp32,
                         out_p,
@@ -232,6 +232,7 @@ class FusedAdamV1(torch.optim.Optimizer):
                         bias_correction,
                         group["weight_decay"],
                     )
+
 
                 if p.device.type == "cpu":
                     p.data.copy_(p_data_fp32, non_blocking=True)
