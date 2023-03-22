@@ -113,6 +113,7 @@ class TransformerConfig(FairseqDataclass):
     adaptive_input: bool = False
     subsample: bool = II("model.subsample")
     min_sample_dim: int = II("model.min_sample_dim")
+    eval_subset_size: int = II("model.eval_subset_size")
     # updatex_freq: int = field(default=1, metadata={"help": "Use bnb optimizers if available."},)
     encoder: EncDecBaseConfig = EncDecBaseConfig()
     # TODO should really be in the encoder config

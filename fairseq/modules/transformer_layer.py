@@ -19,7 +19,7 @@ from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
 
 
-logger = logging.getLogger("fairseq_cli.train")
+# logger = logging.getLogger("fairseq_cli.train")
 
 
 class GlobalSampler:
@@ -90,6 +90,8 @@ class TransformerEncoderLayerBase(nn.Module):
         )
         self.activation_fn = utils.get_activation_fn(activation=cfg.activation_fn)
         self.subsample = cfg.subsample
+        self.eval_subset_size = cfg.eval_subset_size
+        self.min_sample_dim = cfg.min_sample_dim
         activation_dropout_p = cfg.activation_dropout
         if activation_dropout_p == 0:
             # for backwards compatibility with models that use cfg.relu_dropout
@@ -274,9 +276,27 @@ class TransformerEncoderLayerBase(nn.Module):
             #subx2 = x[:, :, :s2]
             subw2 = self.fc2.weight[:, :s2]
             bias2 = self.fc2.bias
-            x = F.linear(x, subw2, bias2)         
+            x = F.linear(x, subw2, bias2)   
+        elif self.subsample and not self.training:
+            assert self.eval_subset_size is not None
+            assert self.eval_subset_size >= self.min_sample_dim
+            assert self.eval_subset_size <= self.embed_dim
+            
+            s1 = self.eval_subset_size//8
+            s2 = self.eval_subset_size
+
+            subx1 = x[:, :, :s1]
+            subw1 = self.fc1.weight[:s2, :s1]
+            bias1 = self.fc1.bias[:s2]
+            x = F.linear(subx1, subw1, bias1)
+
+            x = self.activation_fn(x)
+
+            x = self.activation_dropout_module(x)
+            subw2 = self.fc2.weight[:, :s2]
+            bias2 = self.fc2.bias
+            x = F.linear(x, subw2, bias2) 
         else:
-            print("nope")
             x = self.fc1(x)
             x = self.activation_fn(x)
             x = self.activation_dropout_module(x)
@@ -335,7 +355,8 @@ class TransformerDecoderLayerBase(nn.Module):
         self.quant_noise = cfg.quant_noise.pq
         self.quant_noise_block_size = cfg.quant_noise.pq_block_size
         self.subsample = cfg.subsample
-
+        self.eval_subset_size = cfg.eval_subset_size
+        self.min_sample_dim = cfg.min_sample_dim
         self.cross_self_attention = cfg.cross_self_attention
 
         self.self_attn = self.build_self_attention(
@@ -580,7 +601,6 @@ class TransformerDecoderLayerBase(nn.Module):
             s1 = self.s.subset_size//8
             s2 = self.s.subset_size
 
-            # print(s1, s2)
             subx1 = x[:, :, :s1]
             subw1 = self.fc1.weight[:s2, :s1]
             bias1 = self.fc1.bias[:s2]
@@ -591,8 +611,30 @@ class TransformerDecoderLayerBase(nn.Module):
             x = self.activation_dropout_module(x)
             if self.ffn_layernorm is not None:
                 x = self.ffn_layernorm(x)
-            #subx2 = x[:, :, :s2]
 
+            
+            subw2 = self.fc2.weight[:, :s2]
+            bias2 = self.fc2.bias
+            x = F.linear(x, subw2, bias2)
+        elif self.subsample and not self.training:
+
+            if self.eval_subset_size is None:
+                self.eval_subset_size = self.embed_dim
+            # assert self.eval_subset_size >= self.min_sample_dim
+            # assert self.eval_subset_size <= self.embed_dim
+            s1 = self.eval_subset_size//8
+            s2 = self.eval_subset_size
+
+            subx1 = x[:, :, :s1]
+            subw1 = self.fc1.weight[:s2, :s1]
+            bias1 = self.fc1.bias[:s2]
+            x = F.linear(subx1, subw1, bias1)
+
+            x = self.activation_fn(x)
+
+            x = self.activation_dropout_module(x)
+            if self.ffn_layernorm is not None:
+                x = self.ffn_layernorm(x)
             
             subw2 = self.fc2.weight[:, :s2]
             bias2 = self.fc2.bias
@@ -601,7 +643,6 @@ class TransformerDecoderLayerBase(nn.Module):
             x = self.fc1(x)
             x = self.activation_fn(x)
             x = self.activation_dropout_module(x)
-            # print("nope")
             if self.ffn_layernorm is not None:
                 x = self.ffn_layernorm(x)
             x = self.fc2(x)

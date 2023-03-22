@@ -228,7 +228,12 @@ class TransformerLanguageModelConfig(FairseqDataclass):
             "alias": "--subsample",
         },
     )
-    min_sample_dim: int = field(default=128, metadata={"help": "Use bnb optimizers if available."},)
+    eval_subset_size: int = field(default=1024,
+                                  metadata={"help": "Embedding size for subsampled transformer evaluation.",
+                                  "alias": "--eval_subset_size"})
+    min_sample_dim: int = field(default=128,
+                                metadata={"help": "Use bnb optimizers if available.",
+                                "alias": "--min_sample_dim"})
     # update_freq: int = field(default=1, metadata={"help": "Use bnb optimizers if available."},)
     tokens_per_sample: int = II("task.tokens_per_sample")
     max_target_positions: Optional[int] = II("task.max_target_positions")

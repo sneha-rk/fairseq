@@ -186,56 +186,15 @@ types and tasks.
 
 # Pre-trained models and examples
 
-We provide pre-trained models and pre-processed, binarized test sets for several tasks listed below,
-as well as example training and evaluation commands.
 
-* [Translation](examples/translation/README.md): convolutional and transformer models are available
-* [Language Modeling](examples/language_model/README.md): convolutional and transformer models are available
+To train, use the subsample flag: 
 
-We also have more detailed READMEs to reproduce results from specific papers:
+```
+MKL_THREADING_LAYER=GNU OMP_NUM_THREADS=1 fairseq-train --task language_modeling --share-decoder-input-output-embed --sample-break-mode none --ddp-backend=fully_sharded --log-format simple --log-interval 50 --fp16 --keep-best-checkpoints 1 --no-epoch-checkpoints --use-old-adam --keep-interval-updates 1 --distributed-port 12597 --distributed-world-size 16 --valid-subset valid --arch transformer_lm_big --weight-decay 0.0 --validate-interval-updates 1000 --save-interval-updates 1000 --fp16-no-flatten-grads --min-loss-scale 1e-10 --fp16-scale-window 250 --clip-norm 0.6 --lr-scheduler cosine --optimizer adam --decoder-embed-dim 1024 --decoder-ffn-embed-dim 8192 --decoder-attention-heads 16 --decoder-input-dim 1024 --decoder-output-dim 1024  --adam-betas '(0.9, 0.995)' --adam-eps 1e-07 --max-tokens 16384 --update-freq 1 --tokens-per-sample 512 --max-update 16000 --warmup-updates 3000 <DATA_DIR>  --subsample  --decoder-layers 10 --dropout 0.0 --attention-dropout 0.0 --relu-dropout 0.0 --lr 0.00163 --warmup-init-lr 0.0 --seed 4 --save-dir <CKPT_DIR>
+```
 
-* [XLS-R: Self-supervised Cross-lingual Speech Representation Learning at Scale (Babu et al., 2021)](examples/wav2vec/xlsr/README.md)
-* [Cross-lingual Retrieval for Iterative Self-Supervised Training (Tran et al., 2020)](examples/criss/README.md)
-* [wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations (Baevski et al., 2020)](examples/wav2vec/README.md)
-* [Unsupervised Quality Estimation for Neural Machine Translation (Fomicheva et al., 2020)](examples/unsupervised_quality_estimation/README.md)
-* [Training with Quantization Noise for Extreme Model Compression ({Fan*, Stock*} et al., 2020)](examples/quant_noise/README.md)
-* [Neural Machine Translation with Byte-Level Subwords (Wang et al., 2020)](examples/byte_level_bpe/README.md)
-* [Multilingual Denoising Pre-training for Neural Machine Translation (Liu et at., 2020)](examples/mbart/README.md)
-* [Reducing Transformer Depth on Demand with Structured Dropout (Fan et al., 2019)](examples/layerdrop/README.md)
-* [Jointly Learning to Align and Translate with Transformer Models (Garg et al., 2019)](examples/joint_alignment_translation/README.md)
-* [Levenshtein Transformer (Gu et al., 2019)](examples/nonautoregressive_translation/README.md)
-* [Facebook FAIR's WMT19 News Translation Task Submission (Ng et al., 2019)](examples/wmt19/README.md)
-* [RoBERTa: A Robustly Optimized BERT Pretraining Approach (Liu et al., 2019)](examples/roberta/README.md)
-* [wav2vec: Unsupervised Pre-training for Speech Recognition (Schneider et al., 2019)](examples/wav2vec/README.md)
-* [Mixture Models for Diverse Machine Translation: Tricks of the Trade (Shen et al., 2019)](examples/translation_moe/README.md)
-* [Pay Less Attention with Lightweight and Dynamic Convolutions (Wu et al., 2019)](examples/pay_less_attention_paper/README.md)
-* [Understanding Back-Translation at Scale (Edunov et al., 2018)](examples/backtranslation/README.md)
-* [Classical Structured Prediction Losses for Sequence to Sequence Learning (Edunov et al., 2018)](https://github.com/pytorch/fairseq/tree/classic_seqlevel)
-* [Hierarchical Neural Story Generation (Fan et al., 2018)](examples/stories/README.md)
-* [Scaling Neural Machine Translation (Ott et al., 2018)](examples/scaling_nmt/README.md)
-* [Convolutional Sequence to Sequence Learning (Gehring et al., 2017)](examples/conv_seq2seq/README.md)
-* [Language Modeling with Gated Convolutional Networks (Dauphin et al., 2017)](examples/language_model/README.conv.md)
+To evaluate subsampled transformer:
 
-# Join the fairseq community
-
-* Twitter: https://twitter.com/fairseq
-* Facebook page: https://www.facebook.com/groups/fairseq.users
-* Google group: https://groups.google.com/forum/#!forum/fairseq-users
-
-# License
-
-fairseq(-py) is MIT-licensed.
-The license applies to the pre-trained models as well.
-
-# Citation
-
-Please cite as:
-
-``` bibtex
-@inproceedings{ott2019fairseq,
-  title = {fairseq: A Fast, Extensible Toolkit for Sequence Modeling},
-  author = {Myle Ott and Sergey Edunov and Alexei Baevski and Angela Fan and Sam Gross and Nathan Ng and David Grangier and Michael Auli},
-  booktitle = {Proceedings of NAACL-HLT 2019: Demonstrations},
-  year = {2019},
-}
+```
+fairseq-eval-lm --fp16 --distributed-port 12587 --distributed-world-size 2 --gen-subset valid --path /gscratch/argon/snehark/git/fairseq/checkpoint/snehark/subsample/baseline_dropout_old_adam_all/a605e4648f87e506e1d3e948bb7d6740/checkpoint_1_16000.pt /gscratch/cse/data/cc_small --max-tokens-valid 2048 --valid-subset valid --max-valid-steps 10000 --num-workers 1 --task language_modeling --shorten-method truncate --model-overrides "{'eval_subset_size': 1024}" --tokens-per-sample 512
 ```
