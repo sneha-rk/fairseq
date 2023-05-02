@@ -250,6 +250,16 @@ class CommonConfig(FairseqDataclass):
             "help": "path to run plasma_store, defaults to /tmp/plasma. Paths outside /tmp tend to fail."
         },
     )
+    checkpoint_shard_count: int = field(
+        default=1,
+        metadata={
+            "help": "Number of shards containing the checkpoint - "
+            "if the checkpoint is over 300GB, it is preferable "
+            "to split it into shards to prevent OOM on CPU while loading "
+            "the checkpoint",
+            "argparse_alias": "--checkpoint-shards",
+        },
+    )
 
 
 @dataclass
@@ -750,15 +760,7 @@ class CheckpointConfig(FairseqDataclass):
     checkpoint_suffix: str = field(
         default="", metadata={"help": "suffix to add to the checkpoint file name"}
     )
-    checkpoint_shard_count: int = field(
-        default=1,
-        metadata={
-            "help": "Number of shards containing the checkpoint - "
-            "if the checkpoint is over 300GB, it is preferable "
-            "to split it into shards to prevent OOM on CPU while loading "
-            "the checkpoint"
-        },
-    )
+    checkpoint_shard_count: int = II("common.checkpoint_shard_count")
     load_checkpoint_on_all_dp_ranks: bool = field(
         default=False,
         metadata={
