@@ -60,6 +60,117 @@ class GlobalSampler:
         return cls._instance
 
 
+class InverseSampler:
+    _instance = None
+
+    def __init__(self):
+        raise RuntimeError("Call get_instance() instead")
+
+    def initialize(self):
+        self.rdm = None
+        self.choices = None
+        self.probs = None
+        self.subset_size = 0
+        self.batch_iter = 1
+        self.update_freq = 0
+
+    def init_sampler(self, seed, min_dim, max_dim, update_freq=1):
+        self.rdm = np.random.RandomState(17)
+        self.choices = []
+        self.probs = []
+        ratios = []
+        self.update_freq = update_freq 
+        while True:
+            self.choices.append(min_dim)
+            ratios.append(min_dim)
+            min_dim *= 2
+            if min_dim > max_dim: break
+        self.probs = [r / float(sum(ratios)) for r in ratios]
+        self.subset_size = self.rdm.choice(self.choices, p=self.probs)
+
+    def sample_new_dim(self):
+        if self.batch_iter > 0 and self.batch_iter % self.update_freq == 0:
+            self.batch_iter = 0
+            self.subset_size = self.rdm.choice(self.choices, p=self.probs)
+        self.batch_iter += 1
+
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls.__new__(cls)
+            cls._instance.initialize()
+        # print(cls._instance.probs, cls._instance.subset_size, cls._instance.choices)
+        return cls._instance
+
+class SmoothInverseSampler:
+    _instance = None
+
+    def __init__(self):
+        raise RuntimeError("Call get_instance() instead")
+
+    def initialize(self):
+        self.rdm = None
+        self.choices = None
+        self.probs = None
+        self.subset_size = 0
+        self.batch_iter = 1
+        self.update_freq = 0
+
+    def init_sampler(self, seed, min_dim, max_dim, update_freq=1, temperature=5.0):
+        self.rdm = np.random.RandomState(17)
+        self.choices = []
+        self.probs = []
+        ratios = []
+        self.update_freq = update_freq 
+
+        import math
+
+        def _temperature_smoothing(probs, temperature=5.0):
+            """
+            Applies temperature smoothing to a list of probabilities.
+
+            Args:
+            probs (list): A list of probabilities.
+            temperature (float): The temperature parameter used for smoothing.
+            
+            Returns:
+            A list of smoothed probabilities.
+            """
+            smoothed_probs = []
+            for p in probs:
+                smoothed_probs.append(math.exp(math.log(p) / temperature))
+            
+            # Normalize the probabilities so that they sum to 1.
+            norm_factor = sum(smoothed_probs)
+            smoothed_probs = [p / norm_factor for p in smoothed_probs]
+            
+            return smoothed_probs
+
+        while True:
+            self.choices.append(min_dim)
+            ratios.append(min_dim)
+            min_dim *= 2
+            if min_dim > max_dim: break
+        self.probs = _temperature_smoothing([r / float(sum(ratios)) for r in ratios])
+        self.subset_size = self.rdm.choice(self.choices, p=self.probs)
+
+    def sample_new_dim(self):
+        if self.batch_iter > 0 and self.batch_iter % self.update_freq == 0:
+            self.batch_iter = 0
+            self.subset_size = self.rdm.choice(self.choices, p=self.probs)
+        self.batch_iter += 1
+
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls.__new__(cls)
+            cls._instance.initialize()
+        # print(cls._instance.probs, cls._instance.subset_size, cls._instance.choices)
+        return cls._instance
+
+
 
 class TransformerEncoderLayerBase(nn.Module):
     """Encoder layer block.
@@ -92,6 +203,7 @@ class TransformerEncoderLayerBase(nn.Module):
         self.subsample = cfg.subsample
         self.eval_subset_size = cfg.eval_subset_size
         self.min_sample_dim = cfg.min_sample_dim
+        self.sampler_type= cfg.sampler_type
         activation_dropout_p = cfg.activation_dropout
         if activation_dropout_p == 0:
             # for backwards compatibility with models that use cfg.relu_dropout
@@ -260,9 +372,19 @@ class TransformerEncoderLayerBase(nn.Module):
             x = self.final_layer_norm(x)
 
         if self.subsample and self.training:
-            self.s = GlobalSampler.get_instance()
-            s1 = self.s.subset_size//8
-            s2 = self.s.subset_size
+            if self.sampler_type == 'constant':
+                s1 = self.min_sample_dim//8
+                s2 = self.min_sample_dim
+            else:
+                if self.sampler_type == 'global':
+                    self.s = GlobalSampler.get_instance()
+                if self.sampler_type == 'inverse':
+                    self.s = InverseSampler.get_instance()
+                if self.sampler_type == 'smooth-inverse':
+                    self.s = SmoothInverseSampler.get_instance()
+                s1 = self.s.subset_size//8
+                s2 = self.s.subset_size
+            
 
             print(s1, s2)
             subx1 = x[:, :, :s1]
@@ -357,6 +479,7 @@ class TransformerDecoderLayerBase(nn.Module):
         self.subsample = cfg.subsample
         self.eval_subset_size = cfg.eval_subset_size
         self.min_sample_dim = cfg.min_sample_dim
+        self.sampler_type= cfg.sampler_type
         self.cross_self_attention = cfg.cross_self_attention
 
         self.self_attn = self.build_self_attention(
@@ -365,6 +488,8 @@ class TransformerDecoderLayerBase(nn.Module):
             add_bias_kv=add_bias_kv,
             add_zero_attn=add_zero_attn,
         )
+        if self.subsample:
+            self.self_attn.skip_embed_dim_check = True
         self.attn_ln = (
             LayerNorm(self.embed_dim)
             if utils.safe_getattr(cfg, "scale_attn", False)
@@ -597,9 +722,19 @@ class TransformerDecoderLayerBase(nn.Module):
 
         
         if self.subsample and self.training:
-            self.s = GlobalSampler.get_instance()
-            s1 = self.s.subset_size//8
-            s2 = self.s.subset_size
+            if self.sampler_type == 'constant':
+                s1 = self.min_sample_dim//8
+                s2 = self.min_sample_dim
+            else:
+                if self.sampler_type == 'global':
+                    self.s = GlobalSampler.get_instance()
+                if self.sampler_type == 'inverse':
+                    self.s = InverseSampler.get_instance()
+                if self.sampler_type == 'smooth-inverse':
+                    self.s = SmoothInverseSampler.get_instance()
+                s1 = self.s.subset_size//8
+                s2 = self.s.subset_size
+            # print(s1, s2)
 
             subx1 = x[:, :, :s1]
             subw1 = self.fc1.weight[:s2, :s1]

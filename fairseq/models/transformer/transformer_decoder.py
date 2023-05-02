@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 from torch import Tensor
+import torch.nn.functional as F
 
 from fairseq import utils
 from fairseq.distributed import fsdp_wrap
@@ -26,7 +27,7 @@ from fairseq.modules import (
 )
 from fairseq.modules.checkpoint_activations import checkpoint_wrapper
 from fairseq.modules.quant_noise import quant_noise as apply_quant_noise_
-from fairseq.modules.transformer_layer import GlobalSampler
+from fairseq.modules.transformer_layer import GlobalSampler, InverseSampler, SmoothInverseSampler
 
 
 # rewrite name for backward compatibility in `make_generation_fast_`
@@ -80,9 +81,22 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         self.embed_tokens = embed_tokens
 
         self.embed_scale = 1.0 if cfg.no_scale_embedding else math.sqrt(embed_dim)
-        GlobalSampler.get_instance().init_sampler(17, 128,
-                                                  cfg.decoder_ffn_embed_dim,
-                                                  1)
+        self.subsample = cfg.subsample
+        self.eval_subset_size = cfg.eval_subset_size
+        self.min_sample_dim = cfg.min_sample_dim
+        self.sampler_type= cfg.sampler_type
+        if cfg.sampler_type == 'global':
+            GlobalSampler.get_instance().init_sampler(17, cfg.min_sample_dim,
+                                                    cfg.decoder_ffn_embed_dim,
+                                                    1)
+        if cfg.sampler_type == 'inverse':
+            InverseSampler.get_instance().init_sampler(17, cfg.min_sample_dim,
+                                                    cfg.decoder_ffn_embed_dim,
+                                                    1)
+        if cfg.sampler_type == 'smooth-inverse':
+            SmoothInverseSampler.get_instance().init_sampler(17, cfg.min_sample_dim,
+                                                    cfg.decoder_ffn_embed_dim,
+                                                    1)
 
         if not cfg.adaptive_input and cfg.quant_noise.pq > 0:
             self.quant_noise = apply_quant_noise_(
@@ -217,7 +231,12 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
                 - the decoder's output of shape `(batch, tgt_len, vocab)`
                 - a dictionary with any model-specific outputs
         """
-        GlobalSampler.get_instance().sample_new_dim()
+        if self.sampler_type == 'global':
+            GlobalSampler.get_instance().sample_new_dim()
+        if self.sampler_type == 'inverse':
+            InverseSampler.get_instance().sample_new_dim()
+        if self.sampler_type == 'smooth-inverse':
+            SmoothInverseSampler.get_instance().sample_new_dim()
         x, extra = self.extract_features(
             prev_output_tokens,
             encoder_out=encoder_out,
@@ -230,7 +249,6 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         if not features_only:
             x = self.output_layer(x)
         return x, extra
-    
     
 
     def extract_features(
