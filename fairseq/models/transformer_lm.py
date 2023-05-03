@@ -5,7 +5,7 @@
 
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 from omegaconf import II
 
@@ -237,7 +237,7 @@ class TransformerLanguageModelConfig(FairseqDataclass):
     sampler_type: str = field(default='global',
                                 metadata={"help": "Use bnb optimizers if available.",
                                 "alias": "--sampler-type"})
-    # update_freq: int = field(default=1, metadata={"help": "Use bnb optimizers if available."},)
+    update_freq: List[int] = II("optimizer.update_freq")
     tokens_per_sample: int = II("task.tokens_per_sample")
     max_target_positions: Optional[int] = II("task.max_target_positions")
     tpu: bool = II("common.tpu")

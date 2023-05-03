@@ -815,83 +815,90 @@ class Trainer(object):
         # forward and backward pass
         logging_outputs, sample_size, ooms = [], 0, 0
         for i, sample in enumerate(samples):  # delayed update loop
-            sample, is_dummy_batch = self._prepare_sample(sample)
+            n_repeat = 1
+            if self.cfg.model.subsample and self.cfg.model.sampler_type == 'joint':
+                n_repeat = self.cfg.model.decoder_ffn_embed_dim // self.cfg.model.min_sample_dim
+                assert n_repeat == self.cfg.optimization.update_freq[0]
+                # print("subsample!1!", n_repeat)
 
-            def maybe_no_sync():
-                """
-                Whenever *samples* contains more than one mini-batch, we
-                want to accumulate gradients locally and only call
-                all-reduce in the last backwards pass.
-                """
-                if (
-                    self.data_parallel_world_size > 1
-                    and hasattr(self.model, "no_sync")
-                    and i < len(samples) - 1
-                    # The no_sync context manager results in increased memory
-                    # usage with FSDP, since full-size gradients will be
-                    # accumulated on each GPU. It's typically a better tradeoff
-                    # to do the extra communication with FSDP.
-                    and not self.is_fsdp
-                ):
-                    return self.model.no_sync()
-                else:
-                    return contextlib.ExitStack()  # dummy contextmanager
+            for _ in range(n_repeat):
+                sample, is_dummy_batch = self._prepare_sample(sample)
 
-            try:
-                with maybe_no_sync():
-                    # forward and backward
-                    loss, sample_size_i, logging_output = self.task.train_step(
-                        sample=sample,
-                        model=self.model,
-                        criterion=self.criterion,
-                        optimizer=self.optimizer,
-                        update_num=self.get_num_updates(),
-                        ignore_grad=is_dummy_batch,
-                        **extra_kwargs,
-                    )
-                    del loss
+                def maybe_no_sync():
+                    """
+                    Whenever *samples* contains more than one mini-batch, we
+                    want to accumulate gradients locally and only call
+                    all-reduce in the last backwards pass.
+                    """
+                    if (
+                        self.data_parallel_world_size > 1
+                        and hasattr(self.model, "no_sync")
+                        and i < len(samples) - 1
+                        # The no_sync context manager results in increased memory
+                        # usage with FSDP, since full-size gradients will be
+                        # accumulated on each GPU. It's typically a better tradeoff
+                        # to do the extra communication with FSDP.
+                        and not self.is_fsdp
+                    ):
+                        return self.model.no_sync()
+                    else:
+                        return contextlib.ExitStack()  # dummy contextmanager
 
-                logging_outputs.append(logging_output)
-                sample_size += sample_size_i
+                try:
+                    with maybe_no_sync():
+                        # forward and backward
+                        loss, sample_size_i, logging_output = self.task.train_step(
+                            sample=sample,
+                            model=self.model,
+                            criterion=self.criterion,
+                            optimizer=self.optimizer,
+                            update_num=self.get_num_updates(),
+                            ignore_grad=is_dummy_batch,
+                            **extra_kwargs,
+                        )
+                        del loss
 
-                # emptying the CUDA cache after the first step can
-                # reduce the chance of OOM
-                if self.cuda and self.get_num_updates() == 0:
-                    torch.cuda.empty_cache()
-            except RuntimeError as e:
-                if "out of memory" in str(e):
-                    self._log_oom(e)
-                    has_oom = True
-                    if raise_oom:
+                    logging_outputs.append(logging_output)
+                    sample_size += sample_size_i
+
+                    # emptying the CUDA cache after the first step can
+                    # reduce the chance of OOM
+                    if self.cuda and self.get_num_updates() == 0:
+                        torch.cuda.empty_cache()
+                except RuntimeError as e:
+                    if "out of memory" in str(e):
+                        self._log_oom(e)
+                        has_oom = True
+                        if raise_oom:
+                            raise e
+                    else:
                         raise e
-                else:
-                    raise e
-            except Exception:
-                self.consolidate_optimizer()
-                self.save_checkpoint(
-                    os.path.join(self.cfg.checkpoint.save_dir, "crash.pt"), {}
-                )
-                raise
+                except Exception:
+                    self.consolidate_optimizer()
+                    self.save_checkpoint(
+                        os.path.join(self.cfg.checkpoint.save_dir, "crash.pt"), {}
+                    )
+                    raise
 
-            if has_oom:
-                logger.warning(
-                    "attempting to recover from OOM in forward/backward pass"
-                )
-                ooms += 1
-                self.zero_grad()
-                if self.cuda:
-                    torch.cuda.empty_cache()
+                if has_oom:
+                    logger.warning(
+                        "attempting to recover from OOM in forward/backward pass"
+                    )
+                    ooms += 1
+                    self.zero_grad()
+                    if self.cuda:
+                        torch.cuda.empty_cache()
 
-                if self.cfg.distributed_training.distributed_world_size == 1:
-                    return None
+                    if self.cfg.distributed_training.distributed_world_size == 1:
+                        return None
 
-            if self.tpu and i < len(samples) - 1:
-                # tpu-comment: every XLA operation before marking step is
-                # appended to the IR graph, and processing too many batches
-                # before marking step can lead to OOM errors.
-                # To handle gradient accumulation use case, we explicitly
-                # mark step here for every forward pass without a backward pass
-                self._xla_markstep_and_send_to_cpu()
+                if self.tpu and i < len(samples) - 1:
+                    # tpu-comment: every XLA operation before marking step is
+                    # appended to the IR graph, and processing too many batches
+                    # before marking step can lead to OOM errors.
+                    # To handle gradient accumulation use case, we explicitly
+                    # mark step here for every forward pass without a backward pass
+                    self._xla_markstep_and_send_to_cpu()
 
         if is_dummy_batch:
             if torch.is_tensor(sample_size):

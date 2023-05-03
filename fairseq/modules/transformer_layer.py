@@ -171,6 +171,41 @@ class SmoothInverseSampler:
         return cls._instance
 
 
+class JointOptimizerState:
+    _instance = None
+
+    def __init__(self):
+        raise RuntimeError("Call get_instance() instead")
+
+    def initialize(self):
+        self.choices = None
+        self.subset_size = 0
+        self.batch_iter = 1
+        self.update_freq = 0
+
+    def init_state(self, min_dim, max_dim, update_freq, curr_step=0):
+        self.choices = []
+        self.update_freq = max_dim // min_dim
+        while True:
+            self.choices.append(min_dim)
+            min_dim *= 2
+            if min_dim > max_dim: break
+        self.subset_size = self.choices[curr_step]
+
+    def sample_new_dim(self):
+        if self.batch_iter > 0:
+            self.subset_size = self.choices[self.batch_iter % self.update_freq]
+        self.batch_iter += 1
+
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls.__new__(cls)
+            cls._instance.initialize()
+        return cls._instance
+
+
 
 class TransformerEncoderLayerBase(nn.Module):
     """Encoder layer block.
@@ -732,6 +767,9 @@ class TransformerDecoderLayerBase(nn.Module):
                     self.s = InverseSampler.get_instance()
                 if self.sampler_type == 'smooth-inverse':
                     self.s = SmoothInverseSampler.get_instance()
+                if self.sampler_type == 'joint':
+                    self.s = JointOptimizerState.get_instance()
+
                 s1 = self.s.subset_size//8
                 s2 = self.s.subset_size
             # print(s1, s2)
