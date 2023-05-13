@@ -814,14 +814,16 @@ class Trainer(object):
 
         # forward and backward pass
         logging_outputs, sample_size, ooms = [], 0, 0
+        # print(len(samples))
+        # dummy_size = 0
         for i, sample in enumerate(samples):  # delayed update loop
             n_repeat = 1
             if self.cfg.model.subsample and self.cfg.model.sampler_type == 'joint':
                 n_repeat = self.cfg.model.decoder_ffn_embed_dim // self.cfg.model.min_sample_dim
-                assert n_repeat == self.cfg.optimization.update_freq[0]
+                # assert n_repeat == self.cfg.optimization.update_freq[0]
                 # print("subsample!1!", n_repeat)
 
-            for _ in range(n_repeat):
+            for rep_i in range(n_repeat):
                 sample, is_dummy_batch = self._prepare_sample(sample)
 
                 def maybe_no_sync():
@@ -833,13 +835,14 @@ class Trainer(object):
                     if (
                         self.data_parallel_world_size > 1
                         and hasattr(self.model, "no_sync")
-                        and i < len(samples) - 1
+                        and not (i == len(samples) - 1 and rep_i == n_repeat - 1)
                         # The no_sync context manager results in increased memory
                         # usage with FSDP, since full-size gradients will be
                         # accumulated on each GPU. It's typically a better tradeoff
                         # to do the extra communication with FSDP.
                         and not self.is_fsdp
                     ):
+                        print("yes")
                         return self.model.no_sync()
                     else:
                         return contextlib.ExitStack()  # dummy contextmanager
@@ -859,7 +862,10 @@ class Trainer(object):
                         del loss
 
                     logging_outputs.append(logging_output)
-                    sample_size += sample_size_i
+                    if rep_i == n_repeat - 1:
+                        sample_size += sample_size_i
+                    # dummy_size += sample_size_i
+                    # print(sample_size, dummy_size)
 
                     # emptying the CUDA cache after the first step can
                     # reduce the chance of OOM
@@ -892,7 +898,7 @@ class Trainer(object):
                     if self.cfg.distributed_training.distributed_world_size == 1:
                         return None
 
-                if self.tpu and i < len(samples) - 1:
+                if self.tpu and not (i == len(samples) - 1 and rep_i == n_repeat - 1):
                     # tpu-comment: every XLA operation before marking step is
                     # appended to the IR graph, and processing too many batches
                     # before marking step can lead to OOM errors.

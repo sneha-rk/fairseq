@@ -97,7 +97,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
             SmoothInverseSampler.get_instance().init_sampler(17, cfg.min_sample_dim,
                                                     cfg.decoder_ffn_embed_dim,
                                                     1)
-        if cfg.sampler_type == 'joint':
+        if cfg.sampler_type == 'joint' or self.sampler_type == 'joint-v1':
             JointOptimizerState.get_instance().init_state(cfg.min_sample_dim,
                                                     cfg.decoder_ffn_embed_dim,
                                                     cfg.update_freq)
@@ -241,7 +241,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
             InverseSampler.get_instance().sample_new_dim()
         if self.sampler_type == 'smooth-inverse':
             SmoothInverseSampler.get_instance().sample_new_dim()
-        if self.sampler_type == 'joint':
+        if self.sampler_type == 'joint' or self.sampler_type == 'joint-v1':
             JointOptimizerState.get_instance().sample_new_dim()
         x, extra = self.extract_features(
             prev_output_tokens,

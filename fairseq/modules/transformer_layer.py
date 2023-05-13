@@ -185,15 +185,17 @@ class JointOptimizerState:
 
     def init_state(self, min_dim, max_dim, update_freq, curr_step=0):
         self.choices = []
-        self.update_freq = max_dim // min_dim
         while True:
             self.choices.append(min_dim)
             min_dim *= 2
             if min_dim > max_dim: break
+
+        self.update_freq = len(self.choices)
         self.subset_size = self.choices[curr_step]
 
     def sample_new_dim(self):
         if self.batch_iter > 0:
+            # print(self.update_freq, self.choices)
             self.subset_size = self.choices[self.batch_iter % self.update_freq]
         self.batch_iter += 1
 
@@ -767,17 +769,21 @@ class TransformerDecoderLayerBase(nn.Module):
                     self.s = InverseSampler.get_instance()
                 if self.sampler_type == 'smooth-inverse':
                     self.s = SmoothInverseSampler.get_instance()
-                if self.sampler_type == 'joint':
+                if self.sampler_type == 'joint' or self.sampler_type == 'joint-v1':
                     self.s = JointOptimizerState.get_instance()
 
                 s1 = self.s.subset_size//8
                 s2 = self.s.subset_size
             # print(s1, s2)
-
-            subx1 = x[:, :, :s1]
-            subw1 = self.fc1.weight[:s2, :s1]
-            bias1 = self.fc1.bias[:s2]
-            x = F.linear(subx1, subw1, bias1)
+            if self.sampler_type == 'joint-v1':
+                x = self.fc1(x)
+                x = x[:, :, :s2]
+                # print(x.size())
+            else:
+                subx1 = x[:, :, :s1]
+                subw1 = self.fc1.weight[:s2, :s1]
+                bias1 = self.fc1.bias[:s2]
+                x = F.linear(subx1, subw1, bias1)
 
             x = self.activation_fn(x)
 
@@ -788,6 +794,7 @@ class TransformerDecoderLayerBase(nn.Module):
             
             subw2 = self.fc2.weight[:, :s2]
             bias2 = self.fc2.bias
+            # mat1 and mat2 shapes cannot be multiplied (16384x2048 and 512x256)
             x = F.linear(x, subw2, bias2)
         elif self.subsample and not self.training:
 
@@ -798,10 +805,15 @@ class TransformerDecoderLayerBase(nn.Module):
             s1 = self.eval_subset_size//8
             s2 = self.eval_subset_size
 
-            subx1 = x[:, :, :s1]
-            subw1 = self.fc1.weight[:s2, :s1]
-            bias1 = self.fc1.bias[:s2]
-            x = F.linear(subx1, subw1, bias1)
+            if self.sampler_type == 'joint-v1':
+                x = self.fc1(x)
+                x = x[:, :, :s2]
+                # print(x.size())
+            else:
+                subx1 = x[:, :, :s1]
+                subw1 = self.fc1.weight[:s2, :s1]
+                bias1 = self.fc1.bias[:s2]
+                x = F.linear(subx1, subw1, bias1)
 
             x = self.activation_fn(x)
 

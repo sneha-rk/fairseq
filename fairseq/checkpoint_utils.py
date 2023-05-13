@@ -389,7 +389,7 @@ def get_maybe_sharded_checkpoint_filename(
     orig_filename = filename
     filename = filename.replace(".pt", suffix + ".pt")
     fsdp_filename = filename[:-3] + f"-shard{shard_idx}.pt"
-    model_parallel_filename = orig_filename[:-3] + f"_part{shard_idx}.pt"
+    model_parallel_filename = orig_filename[:-3] + f"-shard{shard_idx}.pt"
     if PathManager.exists(fsdp_filename):
         return fsdp_filename
     elif num_shards > 1:
